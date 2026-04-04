@@ -2,22 +2,22 @@
 
 set -e
 
-# Fix potential CRLF issues (important for curl اجرا)
+# =============================
 
-sed -i 's/\r$//' "$0" 2>/dev/null || true
+# Colors (safe with printf)
 
 # =============================
 
-# Colors (safe)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# =============================
-
-RED=$(printf '\033[0;31m')
-GREEN=$(printf '\033[0;32m')
-YELLOW=$(printf '\033[1;33m')
-BLUE=$(printf '\033[0;34m')
-CYAN=$(printf '\033[0;36m')
-NC=$(printf '\033[0m')
+cecho() {
+printf "%b%s%b\n" "$1" "$2" "$NC"
+}
 
 # =============================
 
@@ -51,7 +51,7 @@ SSH_PORT=$(get_ssh_port)
 # =============================
 
 if ! command -v ufw >/dev/null 2>&1; then
-echo "${YELLOW}Installing UFW...${NC}"
+cecho "$YELLOW" "Installing UFW..."
 export DEBIAN_FRONTEND=noninteractive
 apt update -y >/dev/null 2>&1
 apt install -y ufw >/dev/null 2>&1
@@ -64,13 +64,13 @@ fi
 # =============================
 
 if [ ! -f /etc/ufw/.ufw_initialized ]; then
-echo "${CYAN}First-time setup...${NC}"
+cecho "$CYAN" "First-time setup..."
 
 ```
 ufw --force disable >/dev/null 2>&1
 ufw --force reset >/dev/null 2>&1
 
-echo "${GREEN}Adding SSH port: $SSH_PORT${NC}"
+cecho "$GREEN" "Adding SSH port: $SSH_PORT"
 ufw allow "$SSH_PORT"/tcp >/dev/null 2>&1
 
 ufw default deny incoming >/dev/null 2>&1
@@ -80,7 +80,7 @@ ufw --force enable >/dev/null 2>&1
 
 touch /etc/ufw/.ufw_initialized
 
-echo "${GREEN}UFW initialized successfully!${NC}"
+cecho "$GREEN" "UFW initialized successfully!"
 ```
 
 fi
@@ -92,22 +92,22 @@ fi
 # =============================
 
 show_status() {
-echo
-echo "${BLUE}========== UFW STATUS ==========${NC}"
+printf "\n"
+cecho "$BLUE" "========== UFW STATUS =========="
 
 ```
 if ufw status | grep -q "Status: active"; then
-    echo "${GREEN}UFW is ACTIVE${NC}"
+    cecho "$GREEN" "UFW is ACTIVE"
 else
-    echo "${RED}UFW is INACTIVE${NC}"
+    cecho "$RED" "UFW is INACTIVE"
 fi
 
-echo
-echo "${YELLOW}Open Ports:${NC}"
+printf "\n"
+cecho "$YELLOW" "Open Ports:"
 ufw status numbered | grep -E 'ALLOW|DENY' | sed 's/^/  /'
 
-echo "${BLUE}================================${NC}"
-echo
+cecho "$BLUE" "================================"
+printf "\n"
 ```
 
 }
@@ -128,20 +128,20 @@ for PORT in "${PORTS[@]}"; do
     PORT=$(echo "$PORT" | xargs)
 
     if [ "$PORT" = "$SSH_PORT" ]; then
-        echo "${RED}Skipping SSH port ($SSH_PORT) for safety${NC}"
+        cecho "$RED" "Skipping SSH port ($SSH_PORT)"
         continue
     fi
 
     if ufw status | grep -w "$PORT" | grep -q ALLOW; then
-        echo "${YELLOW}Removing port $PORT${NC}"
+        cecho "$YELLOW" "Removing port $PORT"
         ufw delete allow "$PORT" >/dev/null 2>&1
     else
-        echo "${GREEN}Adding port $PORT${NC}"
+        cecho "$GREEN" "Adding port $PORT"
         ufw allow "$PORT" >/dev/null 2>&1
     fi
 done
 
-echo "${CYAN}Reloading UFW...${NC}"
+cecho "$CYAN" "Reloading UFW..."
 ufw reload >/dev/null 2>&1
 ```
 
@@ -157,11 +157,11 @@ while true; do
 show_status
 
 ```
-echo "${CYAN}Choose an option:${NC}"
-echo "${GREEN}1) Add/Delete Port${NC}"
-echo "${YELLOW}2) Disable UFW${NC}"
-echo "${GREEN}3) Enable UFW${NC}"
-echo "${RED}4) Exit${NC}"
+cecho "$CYAN" "Choose an option:"
+cecho "$GREEN" "1) Add/Delete Port"
+cecho "$YELLOW" "2) Disable UFW"
+cecho "$GREEN" "3) Enable UFW"
+cecho "$RED" "4) Exit"
 
 read -r -p "Enter choice [1-4]: " CHOICE
 
@@ -169,18 +169,18 @@ case "$CHOICE" in
     1) manage_ports ;;
     2)
         ufw disable >/dev/null 2>&1
-        echo "${RED}UFW Disabled${NC}"
+        cecho "$RED" "UFW Disabled"
         ;;
     3)
         ufw --force enable >/dev/null 2>&1
-        echo "${GREEN}UFW Enabled${NC}"
+        cecho "$GREEN" "UFW Enabled"
         ;;
     4)
-        echo "${BLUE}Goodbye!${NC}"
+        cecho "$BLUE" "Goodbye!"
         exit 0
         ;;
     *)
-        echo "${RED}Invalid option${NC}"
+        cecho "$RED" "Invalid option"
         ;;
 esac
 ```
