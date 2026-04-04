@@ -2,147 +2,134 @@
 
 set -e
 
-export DEBIAN_FRONTEND=noninteractive
-
-# Detect SSH Port
-
-SSH_PORT=$(ss -tnlp | grep sshd | awk '{print $4}' | sed 's/.*://g' | head -n1)
-[ -z "$SSH_PORT" ] && SSH_PORT=22
-
-# Check if UFW installed
-
-if ! command -v ufw >/dev/null 2>&1; then
-echo "Installing UFW..."
-apt update -y
-apt install -y ufw
-fi
-
-# Detect first run
-
-FIRST_RUN_FLAG="/etc/ufw/.managed_by_script"
-
-if [ ! -f "$FIRST_RUN_FLAG" ]; then
-echo "===== First Run: Initializing UFW ====="
-
-```
-ufw --force disable || true
-ufw --force reset
-
-# Allow SSH
-ufw allow $SSH_PORT/tcp
-
-ufw --force enable
-
-touch $FIRST_RUN_FLAG
-
-echo "UFW initialized and SSH port ($SSH_PORT) allowed."
-exit 0
-```
-
-fi
+STATE_FILE="/etc/ufw_manager_initialized"
 
 # =========================
+# Get SSH Port
+# =========================
+get_ssh_port() {
+    PORT=$(grep -i "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tail -n1)
+    echo "${PORT:-22}"
+}
 
-# STATUS FUNCTION
+SSH_PORT=$(get_ssh_port)
 
 # =========================
+# Install UFW if not exists
+# =========================
+install_ufw() {
+    if ! command -v ufw >/dev/null 2>&1; then
+        echo "Installing UFW..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt update -y
+        apt install -y ufw
+    fi
+}
 
+# =========================
+# First time setup
+# =========================
+first_time_setup() {
+    echo "===== First Time UFW Setup ====="
+
+    install_ufw
+
+    ufw --force disable
+    ufw --force reset
+
+    echo "Allowing SSH port: $SSH_PORT"
+    ufw allow "$SSH_PORT"/tcp
+
+    ufw --force enable
+
+    touch "$STATE_FILE"
+
+    echo "UFW initialized successfully."
+}
+
+# =========================
+# Show status
+# =========================
 show_status() {
-echo ""
-echo "===== UFW STATUS ====="
-
-```
-if ufw status | grep -q "Status: active"; then
-    echo "Firewall Status : ACTIVE"
-else
-    echo "Firewall Status : INACTIVE"
-fi
-
-echo ""
-echo "Allowed Ports:"
-ufw status numbered | grep -E "ALLOW" || echo "No ports allowed"
-
-echo ""
-```
-
+    echo "=============================="
+    echo "UFW Status: $(ufw status | head -n1)"
+    echo "------------------------------"
+    echo "Allowed Ports:"
+    ufw status numbered | sed '1,2d'
+    echo "=============================="
 }
 
 # =========================
-
-# ADD / DELETE PORTS
-
+# Toggle ports
 # =========================
-
 manage_ports() {
-read -p "Enter ports (comma separated): " PORTS
+    read -p "Enter ports (comma separated): " INPUT
 
-```
-IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
+    IFS=',' read -ra PORTS <<< "$INPUT"
 
-for PORT in "${PORT_ARRAY[@]}"; do
-    PORT=$(echo $PORT | xargs)
+    for PORT in "${PORTS[@]}"; do
+        PORT=$(echo "$PORT" | xargs)
 
-    [ -z "$PORT" ] && continue
+        if [[ "$PORT" == "$SSH_PORT" ]]; then
+            echo "Skipping SSH port ($SSH_PORT)"
+            continue
+        fi
 
-    if [ "$PORT" == "$SSH_PORT" ]; then
-        echo "Skipping SSH port ($SSH_PORT)"
-        continue
-    fi
+        if ufw status | grep -qw "$PORT"; then
+            echo "Deleting port: $PORT"
+            ufw delete allow "$PORT" >/dev/null 2>&1 || true
+        else
+            echo "Adding port: $PORT"
+            ufw allow "$PORT" >/dev/null 2>&1
+        fi
+    done
 
-    if ufw status | grep -q "$PORT"; then
-        echo "Removing port $PORT"
-        ufw delete allow $PORT/tcp || true
-        ufw delete allow $PORT/udp || true
-    else
-        echo "Adding port $PORT"
-        ufw allow $PORT
-    fi
-done
-
-echo "Reloading UFW..."
-ufw reload
-```
-
+    ufw reload
+    echo "Done."
 }
 
 # =========================
+# Menu
+# =========================
+menu() {
+    while true; do
+        show_status
 
-# MENU
+        echo "1 - Add/Delete port"
+        echo "2 - Disable UFW"
+        echo "3 - Enable UFW"
+        echo "4 - Exit"
+
+        read -p "Select option: " CHOICE
+
+        case $CHOICE in
+            1)
+                manage_ports
+                ;;
+            2)
+                ufw disable
+                echo "UFW Disabled"
+                ;;
+            3)
+                ufw enable
+                echo "UFW Enabled"
+                ;;
+            4)
+                exit 0
+                ;;
+            *)
+                echo "Invalid option"
+                ;;
+        esac
+    done
+}
 
 # =========================
-
-while true; do
-show_status
-
-```
-echo "Select an option:"
-echo "1) Add/Delete port"
-echo "2) Disable UFW"
-echo "3) Enable UFW"
-echo "4) Exit"
-
-read -p "Enter choice [1-4]: " CHOICE
-
-case $CHOICE in
-    1)
-        manage_ports
-        ;;
-    2)
-        ufw disable
-        echo "UFW Disabled"
-        ;;
-    3)
-        ufw enable
-        echo "UFW Enabled"
-        ;;
-    4)
-        echo "Exiting..."
-        exit 0
-        ;;
-    *)
-        echo "Invalid option"
-        ;;
-esac
-```
-
-done
+# Main
+# =========================
+if [[ ! -f "$STATE_FILE" ]]; then
+    first_time_setup
+else
+    install_ufw
+    menu
+fi
