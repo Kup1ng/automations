@@ -1,12 +1,10 @@
 #!/bin/bash
 
-set -e
-
-# =========================
+# =============================
 
 # Colors
 
-# =========================
+# =============================
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,170 +13,168 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-STATE_FILE="/etc/ufw_manager_installed"
+# =============================
 
-# =========================
+# Root Check
+
+# =============================
+
+if [ "$EUID" -ne 0 ]; then
+echo -e "${RED}Please run as root${NC}"
+exit 1
+fi
+
+# =============================
 
 # Detect SSH Port
 
-# =========================
+# =============================
 
 get_ssh_port() {
-PORT=$(grep -Ei '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tail -n1)
-echo ${PORT:-22}
+PORT=$(grep -Ei '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -n1)
+[ -z "$PORT" ] && PORT=22
+echo $PORT
 }
-
-# =========================
-
-# Install & Initial Setup
-
-# =========================
-
-initial_setup() {
-
-```
-echo -e "${BLUE}===== Initial UFW Setup =====${NC}"
-
-export DEBIAN_FRONTEND=noninteractive
-
-if ! command -v ufw >/dev/null 2>&1; then
-    echo -e "${YELLOW}Installing UFW...${NC}"
-    apt update -y
-    apt install -y ufw
-fi
-
-echo -e "${YELLOW}Disabling UFW...${NC}"
-ufw --force disable || true
-
-echo -e "${YELLOW}Resetting rules...${NC}"
-ufw --force reset
 
 SSH_PORT=$(get_ssh_port)
-echo -e "${GREEN}Detected SSH Port: $SSH_PORT${NC}"
 
-echo -e "${YELLOW}Allowing SSH port...${NC}"
-ufw allow ${SSH_PORT}/tcp
+# =============================
 
-echo -e "${YELLOW}Enabling UFW...${NC}"
-ufw --force enable
+# Install UFW if needed
 
-systemctl enable ufw >/dev/null 2>&1
+# =============================
 
-touch $STATE_FILE
-
-echo -e "${GREEN}UFW Installed and Configured Successfully!${NC}"
-```
-
-}
-
-# =========================
-
-# Show Status
-
-# =========================
-
-show_status() {
-
-```
-echo -e "${CYAN}\n===== UFW STATUS =====${NC}"
-
-if ufw status | grep -q "Status: active"; then
-    echo -e "Status: ${GREEN}ACTIVE${NC}"
-else
-    echo -e "Status: ${RED}INACTIVE${NC}"
+if ! command -v ufw >/dev/null 2>&1; then
+echo -e "${YELLOW}Installing UFW...${NC}"
+apt update -y >/dev/null 2>&1
+apt install -y ufw >/dev/null 2>&1
 fi
 
-echo -e "\n${BLUE}Allowed Ports:${NC}"
-ufw status numbered | sed '1,2d'
+# =============================
+
+# First Run Setup
+
+# =============================
+
+if [ ! -f /etc/ufw/.ufw_initialized ]; then
+echo -e "${CYAN}First-time setup...${NC}"
+
+```
+ufw --force disable >/dev/null 2>&1
+ufw reset >/dev/null 2>&1
+
+echo -e "${GREEN}Adding SSH port: $SSH_PORT${NC}"
+ufw allow $SSH_PORT/tcp >/dev/null 2>&1
+
+ufw default deny incoming >/dev/null 2>&1
+ufw default allow outgoing >/dev/null 2>&1
+
+ufw --force enable >/dev/null 2>&1
+
+touch /etc/ufw/.ufw_initialized
+
+echo -e "${GREEN}UFW initialized successfully!${NC}"
+```
+
+fi
+
+# =============================
+
+# Status Display
+
+# =============================
+
+show_status() {
+echo -e "\n${BLUE}========== UFW STATUS ==========${NC}"
+
+```
+if ufw status | grep -q "Status: active"; then
+    echo -e "${GREEN}UFW is ACTIVE${NC}"
+else
+    echo -e "${RED}UFW is INACTIVE${NC}"
+fi
+
+echo -e "\n${YELLOW}Open Ports:${NC}"
+ufw status numbered | grep -E 'ALLOW|DENY' | sed 's/^/  /'
+
+echo -e "${BLUE}================================${NC}\n"
 ```
 
 }
 
-# =========================
+# =============================
 
 # Add/Delete Ports
 
-# =========================
+# =============================
 
 manage_ports() {
+read -p "Enter ports (comma separated): " INPUT
 
 ```
-echo -e "${CYAN}Enter ports (comma separated):${NC}"
-read PORTS
+IFS=',' read -ra PORTS <<< "$INPUT"
 
-IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
-
-for PORT in "${PORT_ARRAY[@]}"; do
+for PORT in "${PORTS[@]}"; do
     PORT=$(echo $PORT | xargs)
 
-    if ufw status | grep -w "$PORT" >/dev/null 2>&1; then
-        echo -e "${RED}Removing port $PORT${NC}"
-        ufw delete allow $PORT || true
+    if [ "$PORT" == "$SSH_PORT" ]; then
+        echo -e "${RED}Skipping SSH port ($SSH_PORT) for safety${NC}"
+        continue
+    fi
+
+    if ufw status | grep -w "$PORT" | grep -q ALLOW; then
+        echo -e "${YELLOW}Removing port $PORT${NC}"
+        ufw delete allow $PORT >/dev/null 2>&1
     else
         echo -e "${GREEN}Adding port $PORT${NC}"
-        ufw allow $PORT
+        ufw allow $PORT >/dev/null 2>&1
     fi
 done
 
-echo -e "${YELLOW}Reloading UFW...${NC}"
-ufw reload
+echo -e "${CYAN}Reloading UFW...${NC}"
+ufw reload >/dev/null 2>&1
 ```
 
 }
 
-# =========================
+# =============================
 
 # Menu
 
-# =========================
+# =============================
 
-menu() {
-
-```
 while true; do
-    show_status
+show_status
 
-    echo -e "\n${YELLOW}Choose an option:${NC}"
-    echo -e "1) Add/Delete Port"
-    echo -e "2) Disable UFW"
-    echo -e "3) Enable UFW"
-    echo -e "4) Exit"
+```
+echo -e "${CYAN}Choose an option:${NC}"
+echo -e "${GREEN}1) Add/Delete Port${NC}"
+echo -e "${YELLOW}2) Disable UFW${NC}"
+echo -e "${GREEN}3) Enable UFW${NC}"
+echo -e "${RED}4) Exit${NC}"
 
-    read -p "Enter choice: " choice
+read -p "Enter choice [1-4]: " CHOICE
 
-    case $choice in
-        1)
-            manage_ports
-            ;;
-        2)
-            echo -e "${RED}Disabling UFW...${NC}"
-            ufw disable
-            ;;
-        3)
-            echo -e "${GREEN}Enabling UFW...${NC}"
-            ufw enable
-            ;;
-        4)
-            echo -e "${BLUE}Bye 👋${NC}"
-            exit 0
-            ;;
-        *)
-            echo -e "${RED}Invalid option${NC}"
-            ;;
-    esac
-done
+case $CHOICE in
+    1)
+        manage_ports
+        ;;
+    2)
+        ufw disable >/dev/null 2>&1
+        echo -e "${RED}UFW Disabled${NC}"
+        ;;
+    3)
+        ufw --force enable >/dev/null 2>&1
+        echo -e "${GREEN}UFW Enabled${NC}"
+        ;;
+    4)
+        echo -e "${BLUE}Goodbye!${NC}"
+        exit 0
+        ;;
+    *)
+        echo -e "${RED}Invalid option${NC}"
+        ;;
+esac
 ```
 
-}
-
-# =========================
-
-# Main Logic
-
-# =========================
-
-if [ ! -f "$STATE_FILE" ]; then
-initial_setup
-else
-menu
-fi
+done
