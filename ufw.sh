@@ -1,186 +1,146 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -e
 
-# =============================
-
-# Colors (safe with printf)
-
-# =============================
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-cecho() {
-printf "%b%s%b\n" "$1" "$2" "$NC"
-}
-
-# =============================
-
-# Root Check
-
-# =============================
-
-if [ "$EUID" -ne 0 ]; then
-echo "Please run as root"
-exit 1
-fi
-
-# =============================
+export DEBIAN_FRONTEND=noninteractive
 
 # Detect SSH Port
 
-# =============================
+SSH_PORT=$(ss -tnlp | grep sshd | awk '{print $4}' | sed 's/.*://g' | head -n1)
+[ -z "$SSH_PORT" ] && SSH_PORT=22
 
-get_ssh_port() {
-PORT=$(awk '/^Port / {print $2}' /etc/ssh/sshd_config 2>/dev/null | head -n1)
-[ -z "$PORT" ] && PORT=22
-echo "$PORT"
-}
-
-SSH_PORT=$(get_ssh_port)
-
-# =============================
-
-# Install UFW if needed
-
-# =============================
+# Check if UFW installed
 
 if ! command -v ufw >/dev/null 2>&1; then
-cecho "$YELLOW" "Installing UFW..."
-export DEBIAN_FRONTEND=noninteractive
-apt update -y >/dev/null 2>&1
-apt install -y ufw >/dev/null 2>&1
+echo "Installing UFW..."
+apt update -y
+apt install -y ufw
 fi
 
-# =============================
+# Detect first run
 
-# First Run Setup
+FIRST_RUN_FLAG="/etc/ufw/.managed_by_script"
 
-# =============================
-
-if [ ! -f /etc/ufw/.ufw_initialized ]; then
-cecho "$CYAN" "First-time setup..."
+if [ ! -f "$FIRST_RUN_FLAG" ]; then
+echo "===== First Run: Initializing UFW ====="
 
 ```
-ufw --force disable >/dev/null 2>&1
-ufw --force reset >/dev/null 2>&1
+ufw --force disable || true
+ufw --force reset
 
-cecho "$GREEN" "Adding SSH port: $SSH_PORT"
-ufw allow "$SSH_PORT"/tcp >/dev/null 2>&1
+# Allow SSH
+ufw allow $SSH_PORT/tcp
 
-ufw default deny incoming >/dev/null 2>&1
-ufw default allow outgoing >/dev/null 2>&1
+ufw --force enable
 
-ufw --force enable >/dev/null 2>&1
+touch $FIRST_RUN_FLAG
 
-touch /etc/ufw/.ufw_initialized
-
-cecho "$GREEN" "UFW initialized successfully!"
+echo "UFW initialized and SSH port ($SSH_PORT) allowed."
+exit 0
 ```
 
 fi
 
-# =============================
+# =========================
 
-# Status Display
+# STATUS FUNCTION
 
-# =============================
+# =========================
 
 show_status() {
-printf "\n"
-cecho "$BLUE" "========== UFW STATUS =========="
+echo ""
+echo "===== UFW STATUS ====="
 
 ```
 if ufw status | grep -q "Status: active"; then
-    cecho "$GREEN" "UFW is ACTIVE"
+    echo "Firewall Status : ACTIVE"
 else
-    cecho "$RED" "UFW is INACTIVE"
+    echo "Firewall Status : INACTIVE"
 fi
 
-printf "\n"
-cecho "$YELLOW" "Open Ports:"
-ufw status numbered | grep -E 'ALLOW|DENY' | sed 's/^/  /'
+echo ""
+echo "Allowed Ports:"
+ufw status numbered | grep -E "ALLOW" || echo "No ports allowed"
 
-cecho "$BLUE" "================================"
-printf "\n"
+echo ""
 ```
 
 }
 
-# =============================
+# =========================
 
-# Add/Delete Ports
+# ADD / DELETE PORTS
 
-# =============================
+# =========================
 
 manage_ports() {
-read -r -p "Enter ports (comma separated): " INPUT
+read -p "Enter ports (comma separated): " PORTS
 
 ```
-IFS=',' read -ra PORTS <<< "$INPUT"
+IFS=',' read -ra PORT_ARRAY <<< "$PORTS"
 
-for PORT in "${PORTS[@]}"; do
-    PORT=$(echo "$PORT" | xargs)
+for PORT in "${PORT_ARRAY[@]}"; do
+    PORT=$(echo $PORT | xargs)
 
-    if [ "$PORT" = "$SSH_PORT" ]; then
-        cecho "$RED" "Skipping SSH port ($SSH_PORT)"
+    [ -z "$PORT" ] && continue
+
+    if [ "$PORT" == "$SSH_PORT" ]; then
+        echo "Skipping SSH port ($SSH_PORT)"
         continue
     fi
 
-    if ufw status | grep -w "$PORT" | grep -q ALLOW; then
-        cecho "$YELLOW" "Removing port $PORT"
-        ufw delete allow "$PORT" >/dev/null 2>&1
+    if ufw status | grep -q "$PORT"; then
+        echo "Removing port $PORT"
+        ufw delete allow $PORT/tcp || true
+        ufw delete allow $PORT/udp || true
     else
-        cecho "$GREEN" "Adding port $PORT"
-        ufw allow "$PORT" >/dev/null 2>&1
+        echo "Adding port $PORT"
+        ufw allow $PORT
     fi
 done
 
-cecho "$CYAN" "Reloading UFW..."
-ufw reload >/dev/null 2>&1
+echo "Reloading UFW..."
+ufw reload
 ```
 
 }
 
-# =============================
+# =========================
 
-# Menu
+# MENU
 
-# =============================
+# =========================
 
 while true; do
 show_status
 
 ```
-cecho "$CYAN" "Choose an option:"
-cecho "$GREEN" "1) Add/Delete Port"
-cecho "$YELLOW" "2) Disable UFW"
-cecho "$GREEN" "3) Enable UFW"
-cecho "$RED" "4) Exit"
+echo "Select an option:"
+echo "1) Add/Delete port"
+echo "2) Disable UFW"
+echo "3) Enable UFW"
+echo "4) Exit"
 
-read -r -p "Enter choice [1-4]: " CHOICE
+read -p "Enter choice [1-4]: " CHOICE
 
-case "$CHOICE" in
-    1) manage_ports ;;
+case $CHOICE in
+    1)
+        manage_ports
+        ;;
     2)
-        ufw disable >/dev/null 2>&1
-        cecho "$RED" "UFW Disabled"
+        ufw disable
+        echo "UFW Disabled"
         ;;
     3)
-        ufw --force enable >/dev/null 2>&1
-        cecho "$GREEN" "UFW Enabled"
+        ufw enable
+        echo "UFW Enabled"
         ;;
     4)
-        cecho "$BLUE" "Goodbye!"
+        echo "Exiting..."
         exit 0
         ;;
     *)
-        cecho "$RED" "Invalid option"
+        echo "Invalid option"
         ;;
 esac
 ```
