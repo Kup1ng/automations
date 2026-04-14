@@ -4,6 +4,14 @@ set -e
 
 echo "===== Starting Server Setup ====="
 
+# Detect Ubuntu version and codename
+. /etc/os-release
+UBUNTU_VERSION_ID="${VERSION_ID}"
+UBUNTU_CODENAME="${VERSION_CODENAME}"
+
+echo "Detected Ubuntu version: ${UBUNTU_VERSION_ID}"
+echo "Detected Ubuntu codename: ${UBUNTU_CODENAME}"
+
 # Detect main network interface (with public IP)
 MAIN_IF=$(ip -4 route get 1.1.1.1 | awk '{print $5}' | head -n1)
 echo "Main Interface: $MAIN_IF"
@@ -13,12 +21,40 @@ echo "Main Interface: $MAIN_IF"
 # =========================
 echo "===== Fixing APT Sources ====="
 
-cat > /etc/apt/sources.list <<EOF
-deb http://archive.ubuntu.com/ubuntu $(lsb_release -cs) main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu $(lsb_release -cs)-updates main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu $(lsb_release -cs)-backports main restricted universe multiverse
-deb http://security.ubuntu.com/ubuntu $(lsb_release -cs)-security main restricted universe multiverse
+if [[ "${UBUNTU_VERSION_ID}" == "22.04" ]]; then
+    echo "Configuring APT sources for Ubuntu 22"
+
+    cat > /etc/apt/sources.list <<EOF
+deb http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME} main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu ${UBUNTU_CODENAME}-security main restricted universe multiverse
 EOF
+
+elif [[ "${UBUNTU_VERSION_ID}" == "24.04" ]]; then
+    echo "Configuring APT sources for Ubuntu 24"
+
+    # Prevent duplicate source definitions
+    : > /etc/apt/sources.list
+
+    cat > /etc/apt/sources.list.d/ubuntu.sources <<EOF
+Types: deb
+URIs: http://archive.ubuntu.com/ubuntu/
+Suites: ${UBUNTU_CODENAME} ${UBUNTU_CODENAME}-updates ${UBUNTU_CODENAME}-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://security.ubuntu.com/ubuntu/
+Suites: ${UBUNTU_CODENAME}-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+
+else
+    echo "Unsupported Ubuntu version: ${UBUNTU_VERSION_ID}"
+    exit 1
+fi
 
 # =========================
 # Configure DNS
